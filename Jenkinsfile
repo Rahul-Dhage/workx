@@ -21,9 +21,13 @@ pipeline {
                     # Source NVM
                     . "$NVM_DIR/nvm.sh"
                     
+                    # Install PM2 globally if not installed
+                    npm install pm2 -g || true
+                    
                     # Verify installations
                     node --version
                     npm --version
+                    pm2 --version
                 '''
             }
         }
@@ -51,18 +55,51 @@ pipeline {
         stage('Deploy & Run') {
             steps {
                 script {
-                    // Kill any existing process on PORT 6000 if it exists
-                    sh 'npx kill-port 6000 || true'
-                    
-                    // Start the application
                     sh '''
+                        # Source NVM
                         . "$NVM_DIR/nvm.sh"
-                        nohup npm run preview > app.log 2>&1 &
-                        echo "Application started on port ${PORT}"
+                        
+                        # Stop any existing PM2 process
+                        pm2 delete vite-app || true
+                        
+                        # Start the application with PM2
+                        pm2 start npm --name "vite-app" -- run preview
+                        
+                        # Save PM2 process list
+                        pm2 save
+                        
+                        # Display process status
+                        pm2 list
+                        
+                        echo "Waiting for application to start..."
                         sleep 10
-                        curl http://localhost:${PORT} || echo "Application may need more time to start"
+                        
+                        # Check if the application is running
+                        if curl -s http://localhost:6000 > /dev/null; then
+                            echo "Application is running successfully"
+                            pm2 logs vite-app --lines 10
+                        else
+                            echo "Application failed to start"
+                            pm2 logs vite-app --lines 50
+                            exit 1
+                        fi
                     '''
                 }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                sh '''
+                    echo "Process Status:"
+                    ps aux | grep node
+                    echo "Port Status:"
+                    netstat -tulpn | grep 6000 || true
+                    echo "PM2 Status:"
+                    pm2 list || true
+                '''
             }
         }
     }
