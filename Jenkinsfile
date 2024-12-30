@@ -2,87 +2,147 @@ pipeline {
     agent any
     
     environment {
-        PATH = "/usr/local/bin:${env.PATH}"
-        NVM_DIR = "/var/lib/jenkins/.nvm"
-        PORT = "6000"
+        DOCKER_IMAGE = 'react-app'
+        DOCKER_TAG = 'latest'
     }
 
     stages {
-        stage('Setup Node.js') {
-            steps {
-                sh '''
-                    if [ ! -d "$NVM_DIR" ]; then
-                        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-                        . "$NVM_DIR/nvm.sh"
-                        nvm install 18
-                        nvm use 18
-                    fi
-                    
-                    # Source NVM
-                    . "$NVM_DIR/nvm.sh"
-                    
-                    # Install PM2 globally if not installed
-                    npm install pm2 -g || true
-                    
-                    # Verify installations
-                    node --version
-                    npm --version
-                    pm2 --version
-                '''
-            }
-        }
-        
-        stage('Check & Install Dependencies') {
+        stage('Create Configuration Files') {
             steps {
                 script {
-                    def nodeModulesExists = fileExists 'node_modules'
-                    if (!nodeModulesExists) {
-                        echo 'node_modules not found. Installing dependencies...'
-                        sh '. "$NVM_DIR/nvm.sh" && npm install'
-                    } else {
-                        echo 'node_modules found, skipping npm install'
-                    }
+                    // Create nginx.conf
+                    writeFile file: 'nginx.conf', text: '''
+server {
+    listen 6000;
+    server_name localhost;
+
+    location / {
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+}
+'''
+                    // Create Dockerfile
+                    writeFile file: 'Dockerfile', text: '''
+# Build stage
+FROM node:18-alpine as build
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+
+# Copy built assets
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Copy nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 6000
+
+CMD ["nginx", "-g", "daemon off;"]
+'''
+                }
+            }
+        }
+
+        stage('Install Docker') {
+            steps {
+                script {
+                    sh '''
+                        # Check if Docker is installed
+                        if ! command -v docker &> /dev/null; then
+                            echo "Installing Docker..."
+                            sudo apt-get update
+                            sudo apt-get install -y docker.io
+                            sudo systemctl start docker
+                            sudo systemctl enable docker
+                            sudo usermod -aG docker jenkins
+                            echo "Docker installed successfully"
+                        else
+                            echo "Docker is already installed"
+                        fi
+                        
+                        # Display Docker version
+                        docker --version
+                    '''
                 }
             }
         }
         
-        stage('Build') {
-            steps {
-                sh '. "$NVM_DIR/nvm.sh" && npm run build'
-            }
-        }
-
-        stage('Deploy & Run') {
+        stage('Build Docker Image') {
             steps {
                 script {
                     sh '''
-                        # Source NVM
-                        . "$NVM_DIR/nvm.sh"
+                        # Build Docker image
+                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
                         
-                        # Stop any existing PM2 process
-                        pm2 delete vite-app || true
+                        # Stop existing container if running
+                        docker stop ${DOCKER_IMAGE} || true
+                        docker rm ${DOCKER_IMAGE} || true
                         
-                        # Start the application with PM2
-                        pm2 start npm --name "vite-app" -- run preview
-                        
-                        # Save PM2 process list
-                        pm2 save
-                        
-                        # Display process status
-                        pm2 list
-                        
-                        echo "Waiting for application to start..."
-                        sleep 10
-                        
-                        # Check if the application is running
-                        if curl -s http://localhost:6000 > /dev/null; then
-                            echo "Application is running successfully"
-                            pm2 logs vite-app --lines 10
-                        else
-                            echo "Application failed to start"
-                            pm2 logs vite-app --lines 50
-                            exit 1
+                        # Run new container
+                        docker run -d \
+                            --name ${DOCKER_IMAGE} \
+                            -p 6000:6000 \
+                            --restart unless-stopped \
+                            ${DOCKER_IMAGE}:${DOCKER_TAG}
+                            
+                        # Check container status
+                        docker ps | grep ${DOCKER_IMAGE}
+                    '''
+                }
+            }
+        }
+
+        stage('Open Firewall Port') {
+            steps {
+                script {
+                    sh '''
+                        # Install UFW if not present
+                        if ! command -v ufw &> /dev/null; then
+                            sudo apt-get install -y ufw
                         fi
+                        
+                        # Configure UFW
+                        sudo ufw allow 6000/tcp || true
+                        sudo ufw --force enable || true
+                        sudo ufw status
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    sh '''
+                        # Wait for container to start
+                        sleep 15
+                        
+                        # Check if service is responding
+                        curl -s http://localhost:6000 || echo "Service not responding"
+                        
+                        # Show container logs
+                        docker logs ${DOCKER_IMAGE}
+                        
+                        # Get container IP
+                        echo "Container IP and Port Information:"
+                        docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${DOCKER_IMAGE}
+                        docker port ${DOCKER_IMAGE}
+                        
+                        # Print access instructions
+                        echo "Application should be accessible at:"
+                        echo "Local: http://localhost:6000"
+                        echo "Remote: http://$(hostname -I | awk '{print $1}'):6000"
                     '''
                 }
             }
@@ -90,15 +150,27 @@ pipeline {
     }
 
     post {
+        success {
+            echo 'Deployment successful! Application is running in Docker container.'
+        }
+        failure {
+            script {
+                sh '''
+                    echo "Deployment failed. Collecting diagnostics..."
+                    docker logs ${DOCKER_IMAGE} || true
+                    docker ps -a
+                    netstat -tulpn | grep 6000 || true
+                '''
+            }
+        }
         always {
             script {
                 sh '''
-                    echo "Process Status:"
-                    ps aux | grep node
+                    echo "=== Deployment Status ==="
+                    echo "Docker Container Status:"
+                    docker ps -a | grep ${DOCKER_IMAGE} || true
                     echo "Port Status:"
                     netstat -tulpn | grep 6000 || true
-                    echo "PM2 Status:"
-                    pm2 list || true
                 '''
             }
         }
