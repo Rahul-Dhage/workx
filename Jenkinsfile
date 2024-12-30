@@ -10,14 +10,9 @@ pipeline {
                     ).trim()
 
                     if (nodeInstalled == "not installed") {
-                        echo "Node.js is not installed. Installing Node.js..."
-                        sh '''
-                            # Install Node.js (example for Ubuntu/Debian)
-                            curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-                            sudo apt-get install -y nodejs
-                        '''
+                        error("Node.js is not installed. Please install Node.js manually before running the pipeline.")
                     } else {
-                        echo "Node.js is already installed: ${nodeInstalled}"
+                        echo "Node.js is installed: ${nodeInstalled}"
                     }
                 }
             }
