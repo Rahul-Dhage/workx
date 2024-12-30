@@ -4,7 +4,7 @@ pipeline {
     environment {
         PATH = "/usr/local/bin:${env.PATH}"
         NVM_DIR = "/var/lib/jenkins/.nvm"
-        PORT = "6969"
+        PORT = "6000"
     }
 
     stages {
@@ -51,8 +51,8 @@ pipeline {
         stage('Deploy & Run') {
             steps {
                 script {
-                    // Kill any existing process on PORT 6969 if it exists
-                    sh 'npx kill-port 6969 || true'
+                    // Kill any existing process on PORT 6000 if it exists
+                    sh 'npx kill-port 6000 || true'
                     
                     // Start the application
                     sh '''
