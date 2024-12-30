@@ -87,11 +87,6 @@ CMD ["nginx", "-g", "daemon off;"]
                         if ! command -v ufw &> /dev/null; then
                             sudo apt-get install -y ufw
                         fi
-                        
-                        # Configure UFW
-                        sudo ufw allow 6000/tcp || true
-                        sudo ufw --force enable || true
-                        sudo ufw status
                     '''
                 }
             }
