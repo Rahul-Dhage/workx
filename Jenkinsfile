@@ -53,30 +53,6 @@ CMD ["nginx", "-g", "daemon off;"]
                 }
             }
         }
-
-        stage('Install Docker') {
-            steps {
-                script {
-                    sh '''
-                        # Check if Docker is installed
-                        if ! command -v docker &> /dev/null; then
-                            echo "Installing Docker..."
-                            sudo apt-get update
-                            sudo apt-get install -y docker.io
-                            sudo systemctl start docker
-                            sudo systemctl enable docker
-                            sudo usermod -aG docker jenkins
-                            echo "Docker installed successfully"
-                        else
-                            echo "Docker is already installed"
-                        fi
-                        
-                        # Display Docker version
-                        docker --version
-                    '''
-                }
-            }
-        }
         
         stage('Build Docker Image') {
             steps {
