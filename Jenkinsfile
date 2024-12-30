@@ -78,20 +78,6 @@ CMD ["nginx", "-g", "daemon off;"]
                 }
             }
         }
-
-        stage('Open Firewall Port') {
-            steps {
-                script {
-                    sh '''
-                        # Install UFW if not present
-                        if ! command -v ufw &> /dev/null; then
-                            sudo apt-get install -y ufw
-                        fi
-                    '''
-                }
-            }
-        }
-
         stage('Verify Deployment') {
             steps {
                 script {
