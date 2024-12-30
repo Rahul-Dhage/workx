@@ -4,6 +4,7 @@ pipeline {
     environment {
         PATH = "/usr/local/bin:${env.PATH}"
         NVM_DIR = "/var/lib/jenkins/.nvm"
+        PORT = "6969"
     }
 
     stages {
@@ -27,15 +28,41 @@ pipeline {
             }
         }
         
-        stage('Install Dependencies') {
+        stage('Check & Install Dependencies') {
             steps {
-                sh '. "$NVM_DIR/nvm.sh" && npm install'
+                script {
+                    def nodeModulesExists = fileExists 'node_modules'
+                    if (!nodeModulesExists) {
+                        echo 'node_modules not found. Installing dependencies...'
+                        sh '. "$NVM_DIR/nvm.sh" && npm install'
+                    } else {
+                        echo 'node_modules found, skipping npm install'
+                    }
+                }
             }
         }
         
         stage('Build') {
             steps {
                 sh '. "$NVM_DIR/nvm.sh" && npm run build'
+            }
+        }
+
+        stage('Deploy & Run') {
+            steps {
+                script {
+                    // Kill any existing process on PORT 6969 if it exists
+                    sh 'npx kill-port 6969 || true'
+                    
+                    // Start the application
+                    sh '''
+                        . "$NVM_DIR/nvm.sh"
+                        nohup npm run preview > app.log 2>&1 &
+                        echo "Application started on port ${PORT}"
+                        sleep 10
+                        curl http://localhost:${PORT} || echo "Application may need more time to start"
+                    '''
+                }
             }
         }
     }
